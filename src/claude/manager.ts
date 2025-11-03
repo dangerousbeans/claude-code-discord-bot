@@ -21,6 +21,7 @@ export class ClaudeManager {
   private channelMessages = new Map<string, any>();
   private channelToolCalls = new Map<string, Map<string, { message: any, toolId: string }>>();
   private channelNames = new Map<string, string>();
+  private channelUserIds = new Map<string, string>();
   private channelProcesses = new Map<
     string,
     {
@@ -95,8 +96,11 @@ export class ClaudeManager {
     sessionId?: string,
     discordContext?: DiscordContext
   ): Promise<void> {
-    // Store the channel name for path replacement
+    // Store the channel name and user ID for mentions
     this.channelNames.set(channelId, channelName);
+    if (discordContext?.userId) {
+      this.channelUserIds.set(channelId, discordContext.userId);
+    }
     const workingDir = path.join(this.baseFolder, channelName);
     console.log(`Running Claude Code in: ${workingDir}`);
 
@@ -146,12 +150,18 @@ export class ClaudeManager {
 
       const channel = this.channelMessages.get(channelId)?.channel;
       if (channel) {
+        const userId = this.channelUserIds.get(channelId);
+        const mention = userId ? `<@${userId}>` : '';
+
         const timeoutEmbed = new EmbedBuilder()
           .setTitle("⏰ Timeout")
           .setDescription("Claude Code took too long to respond (5 minutes)")
           .setColor(0xFFD700); // Yellow for timeout
-        
-        channel.send({ embeds: [timeoutEmbed] }).catch(console.error);
+
+        channel.send({
+          content: mention,
+          embeds: [timeoutEmbed]
+        }).catch(console.error);
       }
     }, 5 * 60 * 1000); // 5 minutes
 
@@ -214,12 +224,18 @@ export class ClaudeManager {
         // Process failed - send error embed to Discord
         const channel = this.channelMessages.get(channelId)?.channel;
         if (channel) {
+          const userId = this.channelUserIds.get(channelId);
+          const mention = userId ? `<@${userId}>` : '';
+
           const errorEmbed = new EmbedBuilder()
             .setTitle("❌ Claude Code Failed")
             .setDescription(`Process exited with code: ${code}`)
             .setColor(0xFF0000); // Red for error
 
-          channel.send({ embeds: [errorEmbed] }).catch(console.error);
+          channel.send({
+            content: mention,
+            embeds: [errorEmbed]
+          }).catch(console.error);
         }
       }
     });
@@ -256,12 +272,18 @@ export class ClaudeManager {
       // Send error to Discord
       const channel = this.channelMessages.get(channelId)?.channel;
       if (channel) {
+        const userId = this.channelUserIds.get(channelId);
+        const mention = userId ? `<@${userId}>` : '';
+
         const processErrorEmbed = new EmbedBuilder()
           .setTitle("❌ Process Error")
           .setDescription(truncateForEmbed(error.message))
           .setColor(0xFF0000); // Red for errors
-        
-        channel.send({ embeds: [processErrorEmbed] }).catch(console.error);
+
+        channel.send({
+          content: mention,
+          embeds: [processErrorEmbed]
+        }).catch(console.error);
       }
     });
   }
@@ -411,13 +433,17 @@ export class ClaudeManager {
     const channel = this.channelMessages.get(channelId)?.channel;
     if (!channel) return;
 
+    // Get user ID for mention
+    const userId = this.channelUserIds.get(channelId);
+    const mention = userId ? `<@${userId}>` : '';
+
     // Create a final result embed
     const resultEmbed = new EmbedBuilder();
 
     if (parsed.subtype === "success") {
       let description = "result" in parsed ? parsed.result : "Task completed";
       description += `\n\n*Completed in ${parsed.num_turns} turns*`;
-      
+
       resultEmbed
         .setTitle("✅ Session Complete")
         .setDescription(description)
@@ -430,7 +456,10 @@ export class ClaudeManager {
     }
 
     try {
-      await channel.send({ embeds: [resultEmbed] });
+      await channel.send({
+        content: mention,
+        embeds: [resultEmbed]
+      });
     } catch (error) {
       console.error("Error sending result message:", error);
     }

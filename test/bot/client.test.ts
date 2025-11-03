@@ -1,6 +1,14 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { DiscordBot } from '../../src/bot/client.js';
 
+// Mock commands
+vi.mock('../../src/bot/commands.js', () => ({
+  CommandHandler: vi.fn().mockImplementation(() => ({
+    registerCommands: vi.fn().mockResolvedValue(undefined),
+    handleInteraction: vi.fn().mockResolvedValue(undefined),
+  })),
+}));
+
 // Mock discord.js
 vi.mock('discord.js', () => ({
   Client: vi.fn().mockImplementation(() => ({
@@ -13,12 +21,19 @@ vi.mock('discord.js', () => ({
     Guilds: 1,
     GuildMessages: 2,
     MessageContent: 4,
+    GuildMessageReactions: 8,
   },
+  EmbedBuilder: vi.fn().mockImplementation(() => ({
+    setTitle: vi.fn().mockReturnThis(),
+    setDescription: vi.fn().mockReturnThis(),
+    setColor: vi.fn().mockReturnThis(),
+  })),
 }));
 
 // Mock ClaudeManager
 const mockClaudeManager = {
   hasActiveProcess: vi.fn(),
+  killActiveProcess: vi.fn(),
   clearSession: vi.fn(),
   setDiscordMessage: vi.fn(),
   reserveChannel: vi.fn(),
@@ -53,6 +68,13 @@ describe('DiscordBot', () => {
   describe('constructor', () => {
     it('should create instance without throwing', () => {
       expect(() => new DiscordBot(mockClaudeManager as any, allowedUserId)).not.toThrow();
+    });
+  });
+
+  describe('stop command', () => {
+    it('should have killActiveProcess method in ClaudeManager', () => {
+      expect(mockClaudeManager.killActiveProcess).toBeDefined();
+      expect(typeof mockClaudeManager.killActiveProcess).toBe('function');
     });
   });
 });

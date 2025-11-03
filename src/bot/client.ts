@@ -97,6 +97,23 @@ export class DiscordBot {
 
     const channelId = message.channelId;
 
+    // Check if message is a stop command
+    const isStopCommand = message.content.trim().toLowerCase() === 'stop';
+
+    // If there's an active process and user says "stop", kill it
+    if (isStopCommand && this.claudeManager.hasActiveProcess(channelId)) {
+      console.log(`Stop command received for channel ${channelId}, killing process`);
+      this.claudeManager.killActiveProcess(channelId);
+
+      const stopEmbed = new EmbedBuilder()
+        .setTitle("🛑 Stopped")
+        .setDescription("Claude Code process has been stopped")
+        .setColor(0xFF6B6B); // Red-ish for stop
+
+      await message.channel.send({ embeds: [stopEmbed] });
+      return;
+    }
+
     // Atomic check-and-lock: if channel is already processing, skip
     if (this.claudeManager.hasActiveProcess(channelId)) {
       console.log(

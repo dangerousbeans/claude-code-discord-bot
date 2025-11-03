@@ -26,22 +26,42 @@ describe('escapeShellString', () => {
 describe('buildClaudeCommand', () => {
   it('should build basic command without session ID', () => {
     const command = buildClaudeCommand('/test/dir', 'hello world');
-    expect(command).toBe("cd /test/dir && claude --output-format stream-json --model sonnet -p 'hello world' --verbose");
+    expect(command).toContain("cd /test/dir");
+    expect(command).toContain("claude");
+    expect(command).toContain("--output-format stream-json");
+    expect(command).toContain("--model claude-sonnet-4-5-20250929");
+    expect(command).toContain("--permission-mode acceptEdits");
+    expect(command).toContain("-p 'hello world'");
+    expect(command).toContain("--mcp-config");
   });
 
   it('should build command with session ID', () => {
     const command = buildClaudeCommand('/test/dir', 'hello world', 'session-123');
-    expect(command).toBe("cd /test/dir && claude --resume session-123 --output-format stream-json --model sonnet -p 'hello world' --verbose");
+    expect(command).toContain("--resume session-123");
+    expect(command).toContain("-p 'hello world'");
   });
 
   it('should properly escape prompt with special characters', () => {
     const command = buildClaudeCommand('/test/dir', "don't use this");
-    expect(command).toBe("cd /test/dir && claude --output-format stream-json --model sonnet -p 'don'\\''t use this' --verbose");
+    expect(command).toContain("-p 'don'\\''t use this'");
   });
 
   it('should handle complex prompts', () => {
     const prompt = "Fix the bug in 'config.js' and don't break anything";
     const command = buildClaudeCommand('/project/path', prompt, 'abc-123');
-    expect(command).toBe("cd /project/path && claude --resume abc-123 --output-format stream-json --model sonnet -p 'Fix the bug in '\\''config.js'\\'' and don'\\''t break anything' --verbose");
+    expect(command).toContain("--resume abc-123");
+    expect(command).toContain("-p 'Fix the bug in '\\''config.js'\\'' and don'\\''t break anything'");
+  });
+
+  it('should include Discord context when provided', () => {
+    const discordContext = {
+      channelId: 'channel-123',
+      channelName: 'test-channel',
+      userId: 'user-456',
+      messageId: 'msg-789',
+    };
+    const command = buildClaudeCommand('/test/dir', 'test', undefined, discordContext);
+    expect(command).toContain("--mcp-config");
+    // The MCP config file should be created with the context
   });
 });

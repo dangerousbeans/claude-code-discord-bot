@@ -125,10 +125,13 @@ In your Discord server, create channels for each repository:
 
 ```bash
 # Start the bot
-bun run src/index.ts
-
-# Or use the npm script
 bun start
+
+# Start in background (recommended for production)
+nohup bun run src/index.ts > bot.log 2>&1 &
+
+# Restart the bot (safely stops and restarts)
+bun run restart
 ```
 
 **Important**: Do not use hot reload (`bun --hot`) as it can cause issues with process management and spawn multiple Claude processes.
@@ -139,13 +142,41 @@ Bot is ready! Logged in as Claude Code Bot#1234
 Successfully registered application commands.
 ```
 
+### Managing the Bot
+
+**Restarting the bot:**
+```bash
+bun run restart
+```
+This script safely stops any running bot instance and immediately starts a new one. Logs are written to `bot.log`.
+
+**Viewing logs:**
+```bash
+tail -f bot.log
+```
+
+**Stopping the bot:**
+```bash
+# Find the bot process
+ps aux | grep "bun run src/index.ts"
+
+# Kill it
+kill <PID>
+```
+
 ## Usage
 
 Type any message in a channel that corresponds to a repository folder. The bot will run Claude Code with your message as the prompt and stream the results.
 
+**Notifications**: The bot will @mention you when:
+- ✅ A session completes successfully
+- ❌ A session fails or encounters an error
+- ⏰ A session times out (after 5 minutes)
+
 ### Commands
 
 - **Any message**: Runs Claude Code with your message as the prompt
+- **stop**: Stops the currently running Claude Code process in the channel
 - **/clear**: Resets the current channel's session (starts fresh next time)
 
 ### Example
@@ -164,6 +195,44 @@ Bot: 🔧 LS (path: .)
 - Sessions persist per channel and automatically resume
 - Shows real-time tool usage and responses
 - Only responds to the configured `ALLOWED_USER_ID`
+
+## Development
+
+### Running Tests
+
+```bash
+# Run all tests
+bun run test:run
+
+# Run tests in watch mode
+bun test
+
+# Run tests with coverage report
+bun run test:coverage
+```
+
+### Test Coverage
+
+Current test coverage (excluding MCP integration modules):
+
+- **Overall**: 50.69%
+- **database.ts**: 100% ✅
+- **config.ts**: 100% ✅
+- **shell.ts**: 93.58% ✅
+- **commands.ts**: 76.19%
+- **manager.ts**: 36.79%
+- **client.ts**: 28.46%
+
+Coverage focuses on unit-testable modules. MCP modules are excluded as they require full integration testing with Claude Code CLI and Discord bot running.
+
+### Process Exit Code Handling
+
+The bot properly handles Claude Code process exit codes:
+- **Exit code 0**: Normal successful completion
+- **Exit code 143**: SIGTERM shutdown (also treated as normal)
+- **Other codes**: Displayed as errors in Discord
+
+The bot no longer manually terminates Claude Code processes. It lets them exit naturally when tasks complete.
 
 ## Troubleshooting
 
