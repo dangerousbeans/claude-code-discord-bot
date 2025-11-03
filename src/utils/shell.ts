@@ -32,7 +32,9 @@ export function buildClaudeCommand(
     "--output-format",
     "stream-json",
     "--model",
-    "sonnet",
+    "claude-sonnet-4-5-20250929", // Latest Sonnet 4.5
+    "--permission-mode",
+    "acceptEdits", // Automatically accept edits without prompting
     "-p",
     escapedPrompt,
     "--verbose",
@@ -41,7 +43,7 @@ export function buildClaudeCommand(
   // Add session-specific MCP configuration
   commandParts.push("--mcp-config", sessionMcpConfigPath);
   commandParts.push("--permission-prompt-tool", "mcp__discord-permissions__approve_tool");
-  
+
   // Add allowed tools - we'll let the MCP server handle permissions
   commandParts.push("--allowedTools", "mcp__discord-permissions");
 
@@ -70,8 +72,9 @@ function createSessionMcpConfig(discordContext?: DiscordContext): string {
         command: "node",
         args: [bridgeScriptPath],
         env: {
+          MCP_SERVER_PORT: process.env.MCP_SERVER_PORT || "3001",
           DISCORD_CHANNEL_ID: discordContext?.channelId || "unknown",
-          DISCORD_CHANNEL_NAME: discordContext?.channelName || "unknown", 
+          DISCORD_CHANNEL_NAME: discordContext?.channelName || "unknown",
           DISCORD_USER_ID: discordContext?.userId || "unknown",
           DISCORD_MESSAGE_ID: discordContext?.messageId || ""
         }

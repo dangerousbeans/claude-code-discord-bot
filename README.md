@@ -165,6 +165,29 @@ Bot: 🔧 LS (path: .)
 - Shows real-time tool usage and responses
 - Only responds to the configured `ALLOWED_USER_ID`
 
+## Troubleshooting
+
+### Claude Code Hooks
+
+If you have Claude Code hooks configured (e.g., audio notifications in `~/.claude/settings.json`), they may interfere with the Discord bot. The bot automatically sets `CLAUDE_DISABLE_HOOKS=1` when spawning Claude processes.
+
+To make your hooks respect this, add a check at the beginning of your hook scripts:
+
+```bash
+#!/bin/bash
+# Example: ~/.claude/claude-sound-notification.sh
+
+# Skip hook if running from Discord bot
+if [ "$CLAUDE_DISABLE_HOOKS" = "1" ]; then
+  exit 0
+fi
+
+# Your existing hook code (e.g., play sound)
+mplayer -really-quiet /path/to/sound.mp3
+```
+
+This ensures hooks run normally in your terminal but are skipped when using the Discord bot.
+
 For detailed setup instructions, troubleshooting, and development information, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License

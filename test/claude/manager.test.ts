@@ -15,6 +15,13 @@ vi.mock('../../src/db/database.js', () => ({
   DatabaseManager: vi.fn()
 }));
 
+vi.mock('../../src/utils/shell.js', () => ({
+  buildClaudeCommand: vi.fn((workingDir: string, prompt: string) =>
+    `cd ${workingDir} && claude -p "${prompt}"`
+  ),
+  escapeShellString: vi.fn((str: string) => `'${str}'`)
+}));
+
 describe('ClaudeManager', () => {
   let manager: ClaudeManager;
   let mockDb: any;
@@ -91,15 +98,15 @@ describe('ClaudeManager', () => {
   });
 
   describe('setDiscordMessage', () => {
-    it('should set discord message and initialize responses', () => {
+    it('should set discord message and initialize tool calls', () => {
       const mockMessage = { edit: vi.fn() };
       manager.setDiscordMessage('channel-1', mockMessage);
-      
+
       const channelMessages = (manager as any).channelMessages;
-      const channelResponses = (manager as any).channelResponses;
-      
+      const channelToolCalls = (manager as any).channelToolCalls;
+
       expect(channelMessages.get('channel-1')).toBe(mockMessage);
-      expect(channelResponses.get('channel-1')).toEqual({ embeds: [], textContent: "" });
+      expect(channelToolCalls.get('channel-1')).toBeInstanceOf(Map);
     });
   });
 
@@ -196,6 +203,126 @@ describe('ClaudeManager', () => {
     it('should close database on destroy', () => {
       manager.destroy();
       expect(mockDb.close).toHaveBeenCalled();
+    });
+  });
+
+  describe('process exit code handling', () => {
+    it('should not show error for exit code 0 (success)', async () => {
+      vi.mocked(fs.existsSync).mockReturnValue(true);
+
+      const mockChannel = { send: vi.fn() };
+      manager.setDiscordMessage('channel-1', { channel: mockChannel });
+
+      const mockProcess = {
+        pid: 12345,
+        stdin: { end: vi.fn() },
+        stdout: { on: vi.fn() },
+        stderr: { on: vi.fn() },
+        on: vi.fn(),
+        kill: vi.fn()
+      };
+
+      const { spawn } = await import('child_process');
+      vi.mocked(spawn).mockReturnValue(mockProcess as any);
+
+      manager.reserveChannel('channel-1', undefined, {});
+      await manager.runClaudeCode('channel-1', 'test-channel', 'test prompt');
+
+      // Simulate process close with exit code 0
+      const closeHandler = mockProcess.on.mock.calls.find(call => call[0] === 'close')?.[1];
+      if (closeHandler) closeHandler(0);
+
+      // Should not send error message
+      expect(mockChannel.send).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          embeds: expect.arrayContaining([
+            expect.objectContaining({
+              data: expect.objectContaining({
+                title: '❌ Claude Code Failed'
+              })
+            })
+          ])
+        })
+      );
+    });
+
+    it('should not show error for exit code 143 (SIGTERM)', async () => {
+      vi.mocked(fs.existsSync).mockReturnValue(true);
+
+      const mockChannel = { send: vi.fn() };
+      manager.setDiscordMessage('channel-1', { channel: mockChannel });
+
+      const mockProcess = {
+        pid: 12345,
+        stdin: { end: vi.fn() },
+        stdout: { on: vi.fn() },
+        stderr: { on: vi.fn() },
+        on: vi.fn(),
+        kill: vi.fn()
+      };
+
+      const { spawn } = await import('child_process');
+      vi.mocked(spawn).mockReturnValue(mockProcess as any);
+
+      manager.reserveChannel('channel-1', undefined, {});
+      await manager.runClaudeCode('channel-1', 'test-channel', 'test prompt');
+
+      // Simulate process close with exit code 143 (SIGTERM)
+      const closeHandler = mockProcess.on.mock.calls.find(call => call[0] === 'close')?.[1];
+      if (closeHandler) closeHandler(143);
+
+      // Should not send error message for SIGTERM
+      expect(mockChannel.send).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          embeds: expect.arrayContaining([
+            expect.objectContaining({
+              data: expect.objectContaining({
+                title: '❌ Claude Code Failed'
+              })
+            })
+          ])
+        })
+      );
+    });
+
+    it('should show error for actual failure codes', async () => {
+      vi.mocked(fs.existsSync).mockReturnValue(true);
+
+      const mockChannel = { send: vi.fn().mockResolvedValue({}) };
+      manager.setDiscordMessage('channel-1', { channel: mockChannel });
+
+      const mockProcess = {
+        pid: 12345,
+        stdin: { end: vi.fn() },
+        stdout: { on: vi.fn() },
+        stderr: { on: vi.fn() },
+        on: vi.fn(),
+        kill: vi.fn()
+      };
+
+      const { spawn } = await import('child_process');
+      vi.mocked(spawn).mockReturnValue(mockProcess as any);
+
+      manager.reserveChannel('channel-1', undefined, {});
+      await manager.runClaudeCode('channel-1', 'test-channel', 'test prompt');
+
+      // Simulate process close with exit code 1 (error)
+      const closeHandler = mockProcess.on.mock.calls.find(call => call[0] === 'close')?.[1];
+      if (closeHandler) closeHandler(1);
+
+      // Should send error message for actual failures
+      expect(mockChannel.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          embeds: expect.arrayContaining([
+            expect.objectContaining({
+              data: expect.objectContaining({
+                title: '❌ Claude Code Failed',
+                description: 'Process exited with code: 1'
+              })
+            })
+          ])
+        })
+      );
     });
   });
 });

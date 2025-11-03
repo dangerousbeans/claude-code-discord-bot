@@ -6,6 +6,16 @@ import type { SDKMessage } from "../types/index.js";
 import { buildClaudeCommand, type DiscordContext } from "../utils/shell.js";
 import { DatabaseManager } from "../db/database.js";
 
+/**
+ * Truncate text to fit Discord embed description limit (4096 characters)
+ */
+function truncateForEmbed(text: string, maxLength: number = 4096): string {
+  if (text.length <= maxLength) {
+    return text;
+  }
+  return text.substring(0, maxLength - 50) + '\n...\n[Message truncated]';
+}
+
 export class ClaudeManager {
   private db: DatabaseManager;
   private channelMessages = new Map<string, any>();
@@ -103,6 +113,7 @@ export class ClaudeManager {
       env: {
         ...process.env,
         SHELL: "/bin/bash",
+        CLAUDE_DISABLE_HOOKS: "1", // Disable audio/hooks for Discord bot usage
       },
     });
 
@@ -174,8 +185,6 @@ export class ClaudeManager {
             } else if (parsed.type === "result") {
               this.handleResultMessage(channelId, parsed).then(() => {
                 clearTimeout(timeout);
-                claude.kill("SIGTERM");
-                this.channelProcesses.delete(channelId);
               }).catch(console.error);
             } else if (parsed.type === "system") {
               console.log("System message:", parsed.subtype);
@@ -195,10 +204,13 @@ export class ClaudeManager {
     claude.on("close", (code) => {
       console.log(`Claude process exited with code ${code}`);
       clearTimeout(timeout);
+
       // Ensure cleanup on process close
       this.channelProcesses.delete(channelId);
 
-      if (code !== 0 && code !== null) {
+      // Only show error for actual failure codes (not 0, not null, not 143)
+      // 143 = SIGTERM which can be normal shutdown
+      if (code !== 0 && code !== null && code !== 143) {
         // Process failed - send error embed to Discord
         const channel = this.channelMessages.get(channelId)?.channel;
         if (channel) {
@@ -206,7 +218,7 @@ export class ClaudeManager {
             .setTitle("❌ Claude Code Failed")
             .setDescription(`Process exited with code: ${code}`)
             .setColor(0xFF0000); // Red for error
-          
+
           channel.send({ embeds: [errorEmbed] }).catch(console.error);
         }
       }
@@ -226,9 +238,9 @@ export class ClaudeManager {
         if (channel) {
           const warningEmbed = new EmbedBuilder()
             .setTitle("⚠️ Warning")
-            .setDescription(stderrOutput.trim())
+            .setDescription(truncateForEmbed(stderrOutput.trim()))
             .setColor(0xFFA500); // Orange for warnings
-          
+
           channel.send({ embeds: [warningEmbed] }).catch(console.error);
         }
       }
@@ -246,7 +258,7 @@ export class ClaudeManager {
       if (channel) {
         const processErrorEmbed = new EmbedBuilder()
           .setTitle("❌ Process Error")
-          .setDescription(error.message)
+          .setDescription(truncateForEmbed(error.message))
           .setColor(0xFF0000); // Red for errors
         
         channel.send({ embeds: [processErrorEmbed] }).catch(console.error);
