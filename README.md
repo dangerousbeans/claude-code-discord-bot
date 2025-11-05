@@ -171,7 +171,7 @@ Type any message in a channel that corresponds to a repository folder. The bot w
 **Notifications**: The bot will @mention you when:
 - ✅ A session completes successfully
 - ❌ A session fails or encounters an error
-- ⏰ A session times out (after 5 minutes)
+- ⏰ A session times out (after 30 minutes)
 
 ### Commands
 
