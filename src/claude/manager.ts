@@ -5,6 +5,7 @@ import { EmbedBuilder } from "discord.js";
 import type { SDKMessage } from "../types/index.js";
 import { buildClaudeCommand, type DiscordContext } from "../utils/shell.js";
 import { DatabaseManager } from "../db/database.js";
+import { handleScreenshotDetection } from "../services/screenshot.js";
 
 /**
  * Truncate text to fit Discord embed description limit (4096 characters)
@@ -22,6 +23,13 @@ export class ClaudeManager {
   private channelToolCalls = new Map<string, Map<string, { message: any, toolId: string }>>();
   private channelNames = new Map<string, string>();
   private channelUserIds = new Map<string, string>();
+  private channelProgressMessages = new Map<string, any>();
+  private channelProgressState = new Map<string, {
+    init?: string;
+    assistant?: string;
+    tools: string[];
+    status: 'running' | 'complete' | 'failed' | 'timeout';
+  }>();
   private channelProcesses = new Map<
     string,
     {
@@ -56,6 +64,8 @@ export class ClaudeManager {
     this.channelToolCalls.delete(channelId);
     this.channelNames.delete(channelId);
     this.channelProcesses.delete(channelId);
+    this.channelProgressMessages.delete(channelId);
+    this.channelProgressState.delete(channelId);
   }
 
   setDiscordMessage(channelId: string, message: any): void {
@@ -148,19 +158,19 @@ export class ClaudeManager {
       console.log("Claude process timed out, killing it");
       claude.kill("SIGTERM");
 
-      const channel = this.channelMessages.get(channelId)?.channel;
-      if (channel) {
+      const state = this.channelProgressState.get(channelId);
+      if (state) {
         const userId = this.channelUserIds.get(channelId);
         const mention = userId ? `<@${userId}>` : '';
 
-        const timeoutEmbed = new EmbedBuilder()
-          .setTitle("⏰ Timeout")
-          .setDescription("Claude Code took too long to respond (30 minutes)")
-          .setColor(0xFFD700); // Yellow for timeout
+        state.status = 'timeout';
+        state.assistant = "Claude Code took too long to respond (30 minutes)";
 
-        channel.send({
-          content: mention,
-          embeds: [timeoutEmbed]
+        this.updateProgressMessage(channelId).then(() => {
+          const progressMessage = this.channelProgressMessages.get(channelId);
+          if (progressMessage && mention) {
+            progressMessage.reply(mention).catch(console.error);
+          }
         }).catch(console.error);
       }
     }, 30 * 60 * 1000); // 30 minutes
@@ -215,26 +225,22 @@ export class ClaudeManager {
       console.log(`Claude process exited with code ${code}`);
       clearTimeout(timeout);
 
-      // Ensure cleanup on process close
       this.channelProcesses.delete(channelId);
 
-      // Only show error for actual failure codes (not 0, not null, not 143)
-      // 143 = SIGTERM which can be normal shutdown
       if (code !== 0 && code !== null && code !== 143) {
-        // Process failed - send error embed to Discord
-        const channel = this.channelMessages.get(channelId)?.channel;
-        if (channel) {
+        const state = this.channelProgressState.get(channelId);
+        if (state) {
           const userId = this.channelUserIds.get(channelId);
           const mention = userId ? `<@${userId}>` : '';
 
-          const errorEmbed = new EmbedBuilder()
-            .setTitle("❌ Claude Code Failed")
-            .setDescription(`Process exited with code: ${code}`)
-            .setColor(0xFF0000); // Red for error
+          state.status = 'failed';
+          state.assistant = `Process exited with code: ${code}`;
 
-          channel.send({
-            content: mention,
-            embeds: [errorEmbed]
+          this.updateProgressMessage(channelId).then(() => {
+            const progressMessage = this.channelProgressMessages.get(channelId);
+            if (progressMessage && mention) {
+              progressMessage.reply(mention).catch(console.error);
+            }
           }).catch(console.error);
         }
       }
@@ -243,62 +249,104 @@ export class ClaudeManager {
     claude.stderr.on("data", (data) => {
       const stderrOutput = data.toString();
       console.error("Claude stderr:", stderrOutput);
-
-      // If there's significant stderr output, send warning to Discord
-      if (
-        stderrOutput.trim() &&
-        !stderrOutput.includes("INFO") &&
-        !stderrOutput.includes("DEBUG")
-      ) {
-        const channel = this.channelMessages.get(channelId)?.channel;
-        if (channel) {
-          const warningEmbed = new EmbedBuilder()
-            .setTitle("⚠️ Warning")
-            .setDescription(truncateForEmbed(stderrOutput.trim()))
-            .setColor(0xFFA500); // Orange for warnings
-
-          channel.send({ embeds: [warningEmbed] }).catch(console.error);
-        }
-      }
     });
 
     claude.on("error", (error) => {
       console.error("Claude process error:", error);
       clearTimeout(timeout);
 
-      // Clean up process tracking on error
       this.channelProcesses.delete(channelId);
 
-      // Send error to Discord
-      const channel = this.channelMessages.get(channelId)?.channel;
-      if (channel) {
+      const state = this.channelProgressState.get(channelId);
+      if (state) {
         const userId = this.channelUserIds.get(channelId);
         const mention = userId ? `<@${userId}>` : '';
 
-        const processErrorEmbed = new EmbedBuilder()
-          .setTitle("❌ Process Error")
-          .setDescription(truncateForEmbed(error.message))
-          .setColor(0xFF0000); // Red for errors
+        state.status = 'failed';
+        state.assistant = error.message;
 
-        channel.send({
-          content: mention,
-          embeds: [processErrorEmbed]
+        this.updateProgressMessage(channelId).then(() => {
+          const progressMessage = this.channelProgressMessages.get(channelId);
+          if (progressMessage && mention) {
+            progressMessage.reply(mention).catch(console.error);
+          }
         }).catch(console.error);
       }
     });
   }
 
+  private buildProgressEmbed(channelId: string): EmbedBuilder {
+    const state = this.channelProgressState.get(channelId);
+    if (!state) {
+      return new EmbedBuilder()
+        .setTitle("🚀 Claude Code")
+        .setDescription("Running...")
+        .setColor(0x7289DA);
+    }
+
+    let description = '';
+
+    if (state.init) {
+      description += `${state.init}\n\n`;
+    }
+
+    if (state.assistant) {
+      description += `**Latest Response:**\n${state.assistant}\n\n`;
+    }
+
+    if (state.tools.length > 0) {
+      const recentTools = state.tools.slice(-5);
+      description += `**Recent Tools:**\n${recentTools.join('\n')}`;
+    }
+
+    let title = '🚀 Claude Code';
+    let color = 0x7289DA;
+
+    if (state.status === 'complete') {
+      title = '✅ Session Complete';
+      color = 0x00FF00;
+    } else if (state.status === 'failed') {
+      title = '❌ Session Failed';
+      color = 0xFF0000;
+    } else if (state.status === 'timeout') {
+      title = '⏰ Timeout';
+      color = 0xFFD700;
+    }
+
+    return new EmbedBuilder()
+      .setTitle(title)
+      .setDescription(truncateForEmbed(description.trim()))
+      .setColor(color);
+  }
+
+  private async updateProgressMessage(channelId: string): Promise<void> {
+    const progressMessage = this.channelProgressMessages.get(channelId);
+    if (!progressMessage) return;
+
+    try {
+      const progressEmbed = this.buildProgressEmbed(channelId);
+      await progressMessage.edit({ embeds: [progressEmbed] });
+    } catch (error) {
+      console.error("Error updating progress message:", error);
+    }
+  }
+
   private async handleInitMessage(channelId: string, parsed: any): Promise<void> {
     const channel = this.channelMessages.get(channelId)?.channel;
     if (!channel) return;
-    
-    const initEmbed = new EmbedBuilder()
-      .setTitle("🚀 Claude Code Session Started")
-      .setDescription(`**Working Directory:** ${parsed.cwd}\n**Model:** ${parsed.model}\n**Tools:** ${parsed.tools.length} available`)
-      .setColor(0x00FF00); // Green for init
-    
+
+    const initText = `**Working Directory:** ${parsed.cwd}\n**Model:** ${parsed.model}\n**Tools:** ${parsed.tools.length} available`;
+
+    this.channelProgressState.set(channelId, {
+      init: initText,
+      tools: [],
+      status: 'running'
+    });
+
     try {
-      await channel.send({ embeds: [initEmbed] });
+      const progressEmbed = this.buildProgressEmbed(channelId);
+      const progressMessage = await channel.send({ embeds: [progressEmbed] });
+      this.channelProgressMessages.set(channelId, progressMessage);
     } catch (error) {
       console.error("Error sending init message:", error);
     }
@@ -308,40 +356,38 @@ export class ClaudeManager {
     channelId: string,
     parsed: SDKMessage & { type: "assistant" }
   ): Promise<void> {
-    const channel = this.channelMessages.get(channelId)?.channel;
-    if (!channel) return;
-
     const content = Array.isArray(parsed.message.content)
       ? parsed.message.content.find((c: any) => c.type === "text")?.text || ""
       : parsed.message.content;
 
-    // Check for tool use in the message
     const toolUses = Array.isArray(parsed.message.content)
       ? parsed.message.content.filter((c: any) => c.type === "tool_use")
       : [];
 
-    const toolCalls = this.channelToolCalls.get(channelId) || new Map();
+    const state = this.channelProgressState.get(channelId);
+    if (!state) return;
 
     try {
-      // If there's text content, send an assistant message
       if (content && content.trim()) {
-        const assistantEmbed = new EmbedBuilder()
-          .setTitle("💬 Claude")
-          .setDescription(content)
-          .setColor(0x7289DA); // Discord blurple
-        
-        await channel.send({ embeds: [assistantEmbed] });
+        const truncated = content.length > 200 ? content.substring(0, 200) + '...' : content;
+        state.assistant = truncated;
+
+        // Check for localhost URLs in assistant messages
+        const channel = this.channelMessages.get(channelId)?.channel;
+        if (channel) {
+          handleScreenshotDetection(content, channel).catch(error => {
+            console.error("Error handling screenshot:", error);
+          });
+        }
       }
-      
-      // If there are tool uses, send a message for each tool
+
       for (const tool of toolUses) {
-        let toolMessage = `🔧 ${tool.name}`;
+        let toolMessage = `⏳ ${tool.name}`;
 
         if (tool.input && Object.keys(tool.input).length > 0) {
           const inputs = Object.entries(tool.input)
             .map(([key, value]) => {
               let val = String(value);
-              // Replace base folder path with relative path
               const channelName = this.channelNames.get(channelId);
               if (channelName) {
                 const basePath = `${this.baseFolder}${channelName}`;
@@ -357,24 +403,15 @@ export class ClaudeManager {
           toolMessage += ` (${inputs})`;
         }
 
-        const toolEmbed = new EmbedBuilder()
-          .setDescription(`⏳ ${toolMessage}`)
-          .setColor(0x0099FF); // Blue for tool calls
-
-        const sentMessage = await channel.send({ embeds: [toolEmbed] });
-        
-        // Track this tool call message for later updating
-        toolCalls.set(tool.id, {
-          message: sentMessage,
-          toolId: tool.id
-        });
+        state.tools.push(toolMessage);
       }
 
       const channelName = this.channelNames.get(channelId) || "default";
       this.db.setSession(channelId, parsed.session_id, channelName);
-      this.channelToolCalls.set(channelId, toolCalls);
+
+      await this.updateProgressMessage(channelId);
     } catch (error) {
-      console.error("Error sending assistant message:", error);
+      console.error("Error handling assistant message:", error);
     }
   }
 
@@ -385,40 +422,22 @@ export class ClaudeManager {
 
     if (toolResults.length === 0) return;
 
-    const toolCalls = this.channelToolCalls.get(channelId) || new Map();
+    const state = this.channelProgressState.get(channelId);
+    if (!state || state.tools.length === 0) return;
 
-    for (const result of toolResults) {
-      const toolCall = toolCalls.get(result.tool_use_id);
-      if (toolCall && toolCall.message) {
-        try {
-          // Get the first line of the result
-          const firstLine = result.content.split('\n')[0].trim();
-          const resultText = firstLine.length > 100 
-            ? firstLine.substring(0, 100) + "..."
-            : firstLine;
-          
-          // Get the current embed and update it
-          const currentEmbed = toolCall.message.embeds[0];
-          const originalDescription = currentEmbed.data.description.replace("⏳", "✅");
+    try {
+      for (const result of toolResults) {
+        const lastToolIndex = state.tools.length - 1;
+        if (lastToolIndex >= 0) {
           const isError = result.is_error === true;
-          
-          const updatedEmbed = new EmbedBuilder();
-          
-          if (isError) {
-            updatedEmbed
-              .setDescription(`❌ ${originalDescription.substring(2)}\n*${resultText}*`)
-              .setColor(0xFF0000); // Red for errors
-          } else {
-            updatedEmbed
-              .setDescription(`${originalDescription}\n*${resultText}*`)
-              .setColor(0x00FF00); // Green for completed
-          }
-
-          await toolCall.message.edit({ embeds: [updatedEmbed] });
-        } catch (error) {
-          console.error("Error updating tool result message:", error);
+          const icon = isError ? '❌' : '✅';
+          state.tools[lastToolIndex] = state.tools[lastToolIndex].replace('⏳', icon);
         }
       }
+
+      await this.updateProgressMessage(channelId);
+    } catch (error) {
+      console.error("Error handling tool result message:", error);
     }
   }
 
@@ -430,38 +449,39 @@ export class ClaudeManager {
     const channelName = this.channelNames.get(channelId) || "default";
     this.db.setSession(channelId, parsed.session_id, channelName);
 
-    const channel = this.channelMessages.get(channelId)?.channel;
-    if (!channel) return;
+    const state = this.channelProgressState.get(channelId);
+    if (!state) return;
 
-    // Get user ID for mention
     const userId = this.channelUserIds.get(channelId);
     const mention = userId ? `<@${userId}>` : '';
 
-    // Create a final result embed
-    const resultEmbed = new EmbedBuilder();
-
     if (parsed.subtype === "success") {
-      let description = "result" in parsed ? parsed.result : "Task completed";
-      description += `\n\n*Completed in ${parsed.num_turns} turns*`;
+      let resultText = "result" in parsed ? parsed.result : "Task completed";
+      resultText += `\n\n*Completed in ${parsed.num_turns} turns*`;
+      state.assistant = resultText;
+      state.status = 'complete';
 
-      resultEmbed
-        .setTitle("✅ Session Complete")
-        .setDescription(description)
-        .setColor(0x00FF00); // Green for success
+      // Check if result contains a localhost URL for screenshot
+      const channel = this.channelMessages.get(channelId)?.channel;
+      if (channel && state.assistant) {
+        handleScreenshotDetection(state.assistant, channel).catch(error => {
+          console.error("Error handling screenshot:", error);
+        });
+      }
     } else {
-      resultEmbed
-        .setTitle("❌ Session Failed")
-        .setDescription(`Task failed: ${parsed.subtype}`)
-        .setColor(0xFF0000); // Red for failure
+      state.assistant = `Task failed: ${parsed.subtype}`;
+      state.status = 'failed';
     }
 
     try {
-      await channel.send({
-        content: mention,
-        embeds: [resultEmbed]
-      });
+      await this.updateProgressMessage(channelId);
+
+      const progressMessage = this.channelProgressMessages.get(channelId);
+      if (progressMessage && mention) {
+        await progressMessage.reply(mention);
+      }
     } catch (error) {
-      console.error("Error sending result message:", error);
+      console.error("Error updating result message:", error);
     }
 
     console.log("Got result message, cleaning up process tracking");

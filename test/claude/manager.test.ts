@@ -288,7 +288,11 @@ describe('ClaudeManager', () => {
     it('should show error for actual failure codes', async () => {
       vi.mocked(fs.existsSync).mockReturnValue(true);
 
-      const mockChannel = { send: vi.fn().mockResolvedValue({}) };
+      const mockProgressMessage = {
+        edit: vi.fn().mockResolvedValue({}),
+        reply: vi.fn().mockResolvedValue({})
+      };
+      const mockChannel = { send: vi.fn().mockResolvedValue(mockProgressMessage) };
       manager.setDiscordMessage('channel-1', { channel: mockChannel });
 
       const mockProcess = {
@@ -306,18 +310,37 @@ describe('ClaudeManager', () => {
       manager.reserveChannel('channel-1', undefined, {});
       await manager.runClaudeCode('channel-1', 'test-channel', 'test prompt');
 
+      // Simulate init message to create progress message
+      const stdoutHandler = mockProcess.stdout.on.mock.calls.find(call => call[0] === 'data')?.[1];
+      if (stdoutHandler) {
+        const initMessage = JSON.stringify({
+          type: 'system',
+          subtype: 'init',
+          session_id: 'test-session',
+          cwd: '/test',
+          model: 'test-model',
+          tools: []
+        });
+        stdoutHandler(Buffer.from(initMessage + '\n'));
+      }
+
+      // Wait for async operations
+      await new Promise(resolve => setTimeout(resolve, 10));
+
       // Simulate process close with exit code 1 (error)
       const closeHandler = mockProcess.on.mock.calls.find(call => call[0] === 'close')?.[1];
       if (closeHandler) closeHandler(1);
 
-      // Should send error message for actual failures
-      expect(mockChannel.send).toHaveBeenCalledWith(
+      // Wait for async operations
+      await new Promise(resolve => setTimeout(resolve, 10));
+
+      // Should edit progress message with error
+      expect(mockProgressMessage.edit).toHaveBeenCalledWith(
         expect.objectContaining({
           embeds: expect.arrayContaining([
             expect.objectContaining({
               data: expect.objectContaining({
-                title: '❌ Claude Code Failed',
-                description: 'Process exited with code: 1'
+                title: '❌ Session Failed'
               })
             })
           ])

@@ -6,7 +6,7 @@ A Discord bot that runs Claude Code sessions on different projects based on Disc
 
 ## Quickstart
 
-1. Install [Bun](https://bun.sh/) and [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)
+1. Install [Bun](https://bun.sh/), [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code), and [Beads](https://github.com/steveyegge/beads) (optional)
 2. Create a Discord bot at [Discord Developer Portal](https://discord.com/developers/applications)
 3. Clone and setup:
    ```bash
@@ -26,8 +26,10 @@ A Discord bot that runs Claude Code sessions on different projects based on Disc
 
 - **Channel-based project mapping**: Each Discord channel corresponds to a folder (e.g., `#my-project` → `/path/to/repos/my-project`)
 - **Persistent sessions**: Sessions are maintained per channel and automatically resume
-- **Real-time streaming**: See Claude Code's tool usage and responses as they happen
-- **Activity logging**: Shows up to 20 lines of activity including tool calls with parameters
+- **Live progress updates**: Single message that updates in real-time showing current status, latest response, and recent tools
+- **Automatic screenshots**: Detects localhost URLs and automatically captures/posts screenshots of web apps
+- **Beads task tracking**: Deep integration with Beads issue tracker for managing complex tasks and dependencies
+- **MCP tool permissions**: Interactive approval for MCP tools with 5-minute timeout
 - **Slash commands**: Use `/clear` to reset a session
 
 ## Setup Instructions
@@ -166,12 +168,42 @@ kill <PID>
 
 ## Usage
 
-Type any message in a channel that corresponds to a repository folder. The bot will run Claude Code with your message as the prompt and stream the results.
+Type any message in a channel that corresponds to a repository folder. The bot will run Claude Code with your message as the prompt and show live progress updates.
+
+**Progress Updates**: The bot creates a single message that updates in real-time showing:
+- 🚀 Working directory, model, and available tools
+- 💬 Latest assistant response (most recent 200 characters)
+- 🔧 Recent tool calls with status indicators (⏳ running, ✅ completed, ❌ failed)
+- Final status: ✅ Session Complete, ❌ Session Failed, or ⏰ Timeout
 
 **Notifications**: The bot will @mention you when:
 - ✅ A session completes successfully
 - ❌ A session fails or encounters an error
 - ⏰ A session times out (after 30 minutes)
+
+**MCP Permissions**: When Claude Code requests permission to use an MCP tool, the bot will:
+- Post a permission request message with tool details
+- Wait up to 5 minutes for you to react with ✅ (approve) or ❌ (deny)
+- Auto-deny if no response within the timeout period
+- Delete the permission message after you respond to keep chat clean
+
+**Automatic Screenshots**: When Claude mentions a localhost URL, the bot will:
+- Automatically detect URLs like `localhost:3000`, `http://localhost:8080/path`, `127.0.0.1:5000`
+- Wait 3 seconds for the server to be ready
+- Launch a headless browser and capture a screenshot
+- Post the screenshot to Discord with the URL
+- Supported formats: `localhost:PORT`, `127.0.0.1:PORT`, `0.0.0.0:PORT`, `http://localhost:PORT/path`
+
+**Beads Task Tracking**: Claude Code can use Beads tools to manage complex tasks:
+- `beads_init` - Initialize Beads in project directory
+- `beads_create` - Create issues with priorities and types
+- `beads_list` - List and filter issues
+- `beads_update` - Update issue status, priority, or description
+- `beads_ready` - Show issues ready to work on (no blockers)
+- `beads_blocked` - Show blocked issues
+- `beads_dep_add` - Create dependencies (blocks, related, parent, discovered)
+- `beads_stats` - View project statistics
+- All Beads data is git-versioned in `.beads/` directory
 
 ### Commands
 
@@ -183,17 +215,47 @@ Type any message in a channel that corresponds to a repository folder. The bot w
 
 ```
 You: hello
-Bot: 🔧 LS (path: .)
-     🔧 Read (file_path: ./package.json)
+
+Bot: 🚀 Claude Code
+
+     Working Directory: /path/to/repos/my-project
+     Model: claude-sonnet-4-5-20250929
+     Tools: 15 available
+
+     Latest Response:
      Hello! I can see this is a Node.js project. What would you like to work on?
-     ✅ Completed (3 turns)
+
+     Recent Tools:
+     ✅ Glob (pattern=**/*.ts)
+     ✅ Read (file_path=./package.json)
+
+[Message updates in real-time as Claude works, then final status:]
+
+Bot: ✅ Session Complete
+
+     Working Directory: /path/to/repos/my-project
+     Model: claude-sonnet-4-5-20250929
+     Tools: 15 available
+
+     Latest Response:
+     Task completed
+
+     Completed in 3 turns
+
+     Recent Tools:
+     ✅ Glob (pattern=**/*.ts)
+     ✅ Read (file_path=./package.json)
+
+@YourUsername
 ```
 
 ## How It Works
 
 - Each Discord channel maps to a folder: `#my-project` → `/path/to/repos/my-project`
 - Sessions persist per channel and automatically resume
-- Shows real-time tool usage and responses
+- Single progress message updates in real-time (no spam!)
+- Shows latest response, recent tools, and current status
+- @mentions you only when input needed or task completes
 - Only responds to the configured `ALLOWED_USER_ID`
 
 ## Development

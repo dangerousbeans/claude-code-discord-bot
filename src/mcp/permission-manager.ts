@@ -10,7 +10,7 @@ export class PermissionManager {
   private defaultOnTimeout: 'allow' | 'deny';
 
   constructor() {
-    this.approvalTimeout = parseInt(process.env.MCP_APPROVAL_TIMEOUT || '30') * 1000; // Convert to ms
+    this.approvalTimeout = parseInt(process.env.MCP_APPROVAL_TIMEOUT || '300') * 1000; // Convert to ms
     this.defaultOnTimeout = (process.env.MCP_DEFAULT_ON_TIMEOUT as 'allow' | 'deny') || 'deny';
   }
 

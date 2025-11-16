@@ -45,7 +45,7 @@ export function buildClaudeCommand(
   commandParts.push("--permission-prompt-tool", "mcp__discord-permissions__approve_tool");
 
   // Add allowed tools - we'll let the MCP server handle permissions
-  commandParts.push("--allowedTools", "mcp__discord-permissions");
+  commandParts.push("--allowedTools", "mcp__discord-permissions,mcp__beads");
 
   if (sessionId) {
     commandParts.splice(3, 0, "--resume", sessionId);
@@ -64,7 +64,8 @@ function createSessionMcpConfig(discordContext?: DiscordContext): string {
   
   const baseDir = path.dirname(path.dirname(__dirname)); // Go up to project root
   const bridgeScriptPath = path.join(baseDir, 'mcp-bridge.cjs');
-  
+  const beadsServerPath = path.join(baseDir, 'dist', 'beads-server.js');
+
   // Create MCP config with hardcoded environment variables
   const mcpConfig = {
     mcpServers: {
@@ -78,6 +79,10 @@ function createSessionMcpConfig(discordContext?: DiscordContext): string {
           DISCORD_USER_ID: discordContext?.userId || "unknown",
           DISCORD_MESSAGE_ID: discordContext?.messageId || ""
         }
+      },
+      "beads": {
+        command: "node",
+        args: [beadsServerPath]
       }
     }
   };
