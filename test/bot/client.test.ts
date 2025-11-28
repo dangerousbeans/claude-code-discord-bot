@@ -46,7 +46,7 @@ describe('DiscordBot', () => {
   const allowedUserId = 'user-123';
 
   beforeEach(() => {
-    discordBot = new DiscordBot(mockClaudeManager as any, allowedUserId);
+    discordBot = new DiscordBot(mockClaudeManager as any, allowedUserId, '/base/folder');
     vi.clearAllMocks();
   });
 
@@ -67,7 +67,7 @@ describe('DiscordBot', () => {
   
   describe('constructor', () => {
     it('should create instance without throwing', () => {
-      expect(() => new DiscordBot(mockClaudeManager as any, allowedUserId)).not.toThrow();
+      expect(() => new DiscordBot(mockClaudeManager as any, allowedUserId, '/base/folder')).not.toThrow();
     });
   });
 

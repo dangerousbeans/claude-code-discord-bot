@@ -6,15 +6,18 @@ import {
 import type { ClaudeManager } from '../claude/manager.js';
 import { CommandHandler } from './commands.js';
 import type { MCPPermissionServer } from '../mcp/server.js';
+import { SessionDiscoveryService } from '../services/session-discovery.js';
 
 export class DiscordBot {
   public client: Client; // Make public so MCP server can access it
   private commandHandler: CommandHandler;
   private mcpServer?: MCPPermissionServer;
+  private sessionDiscovery: SessionDiscoveryService;
 
   constructor(
     private claudeManager: ClaudeManager,
-    private allowedUserId: string
+    private allowedUserId: string,
+    private baseFolder: string
   ) {
     this.client = new Client({
       intents: [
@@ -26,6 +29,7 @@ export class DiscordBot {
     });
 
     this.commandHandler = new CommandHandler(claudeManager, allowedUserId);
+    this.sessionDiscovery = new SessionDiscoveryService(baseFolder, claudeManager);
     this.setupEventHandlers();
   }
 
@@ -43,6 +47,10 @@ export class DiscordBot {
         process.env.DISCORD_TOKEN!,
         this.client.user!.id
       );
+
+      // Discover and sync existing Claude Code sessions
+      console.log('Discovering existing Claude Code sessions...');
+      await this.sessionDiscovery.syncDiscoveredSessions(this.client);
     });
 
     this.client.on("interactionCreate", async (interaction) => {
